@@ -3,9 +3,8 @@
 Node *criarNo();
 void liberarNo(Node *no);
 void split(char* newkey, int newkeyChildRRN, Node page, char* promoKey, int promoChild, Node newpage, Cabecalho* reg_cabecalho);
-int insert(int currentRRN, char key[], char **promoKey, int promoChild, Cabecalho* reg_cabecalho);
+int insert(Node** node, int currentRRN, char key[], char **promoKey, int promoChild, Cabecalho* reg_cabecalho, FILE* file_dados, FILE* file_indice);
 void imprimirArvoreB(Node *raiz, int nivel);
-void search(int RRN, char key, int foundRRN, int foundPos);
 
 Node* criarNo(){
 
@@ -15,7 +14,7 @@ Node* criarNo(){
         novoNo->filhos[i] = - 1;
     }
 
-    novoNo->nroChavesNo = 0;
+    novoNo->nroChavesNo = 1; // começa com 1 mesmo? Será que não é zero?
     novoNo->alturaNo = 1;
     novoNo->RRNdoNo = 0; // Definindo o valor inicial do RRN do nó
 
@@ -31,39 +30,38 @@ void set_cabecalho(Cabecalho* reg_cabecalho, char status, int noRaiz, int RRNpro
 int conta_registros(FILE* arq){
     char buffer;
     int counter = 0;
-    fseek(arq, 205, SEEK_SET);
+    fseek(arq, 205+1, SEEK_SET); // tem esse +1 mesmo?
     while(fread(&buffer, sizeof(char), 205, arq) != 0){
         counter++;
     }
     return counter;
 }
 
-void driver(){
-    FILE* file_indice = fopen("arvB.bin", "rb+");
-    FILE* file_dados = fopen("binary.bin", "rb");
+void driver(Node** root, FILE* file_dados, FILE* file_indice){
 
     Cabecalho reg_cabecalho;
-    set_cabecalho(&reg_cabecalho, '0', -1, 0);
+    set_cabecalho(&reg_cabecalho, '0', -1, 0); // status = '0', noRaiz = -1, RRNproxNo = 0
 
+    // CRIANDO CHAVES VAZIAS E O ESPAÇO VAZIO DO CABECALHO
     //char empty_key[55];
     char* empty_key = (char*) malloc(55*sizeof(char));
-    char lixo_cabecalho[196];
-    int RRNROOT;
     memset(empty_key, '$', 55);
     empty_key[54] = '\0';
-
+    
+    char lixo_cabecalho[196];
     memset(lixo_cabecalho, '$', 196);
     lixo_cabecalho[195] = '\0';
+    
+    int RRNROOT = 0;
 
-    Node* root = criarNo();
-
-    if (file_indice != NULL){
+    if (file_indice != NULL){ // (SE O ARQUIVO EXISTE)
         printf("O arquivo existe.");
-        fclose(file_indice);
+        //fclose(file_indice);
     }
     else{
+        // CRIACAO DO ARQUIVO BINARIO DE INDICE
         printf("Arquivo inexistente. Criando arquivo...");
-        if ((file_indice = fopen("arvB", "wb+")) != NULL){
+        if ((file_indice = fopen("arvB.bin", "wb+")) != NULL){
             printf("arquivo criado.");
         }
         else{
@@ -71,36 +69,40 @@ void driver(){
         }
     }
 
-    Registro* aux = (Registro*) malloc(sizeof(Registro));
-    leitura_binario(aux, file_dados);
-
+    //  CONFIGURACAO INICIAL DO CABECALHO
     fwrite(&reg_cabecalho.status, sizeof(char), 1, file_indice);
     fwrite(&reg_cabecalho.noRaiz, sizeof(int), 1, file_indice);
     fwrite(&reg_cabecalho.RRNproxNo, sizeof(int), 1, file_indice);
     fwrite(lixo_cabecalho, 1, 196, file_indice); // AQUI TEM QUE TER &?
+    //--------------------------------------------
 
+    // INICIANDO A RAIZ COM CHAVES VAZIAS
     for (int i = 0; i < TAM_ORDEM - 1; i++){
         RRNROOT = reg_cabecalho.RRNproxNo;
-        strcpy((root->chaves[i]).chave, empty_key);
+        strcpy(((*root)->chaves[i]).chave, empty_key);
     }
     char chave[55];
 
+    // INSERINDO A CHAVE DO RRN 0 DO ARQUIVO BIN DE DADOS NA RAIZ DA ARVORE
     strcpy(chave, funcionalidade4("binary.bin", 0).nomeTecnologiaOrigem);
     strcat(chave, funcionalidade4("binary.bin",0).nomeTecnologiaDestino);
-    strcpy((root->chaves[0]).chave, chave);
-    root->chaves[0].RRN = 0;
-    root->nroChavesNo++;
+    strcpy(((*root)->chaves[0]).chave, chave);
+    (*root)->chaves[0].RRN = 0;
+    (*root)->nroChavesNo++;
 
+    // INSERINDO TODAS AS OUTRAS CHAVES NA ARVORE
     int counter = 1;
+    // O PROGRAMA ESTÁ LERDO POR CAUSA DESSA PARTE ABAIXO
     while (funcionalidade4("binary.bin", counter).nomeTecnologiaOrigem != NULL){
         int promoChild = -1;
-        if (insert(RRNROOT, chave, &empty_key, promoChild, &reg_cabecalho) == 1){
+        // *************verificar se essa função insert está sendo executada mesmo sendo somente sendo utilizada pelo if()
+        if (insert(root, RRNROOT, chave, &empty_key, promoChild, &reg_cabecalho, file_dados, file_indice) == 1){ // SE INSERT RETORNAR PROMOTION
             reg_cabecalho.RRNproxNo++;
         }
+        counter++;
     }
-    free(aux);
-    fclose(file_indice);
-}
+    free(empty_key);
+} // >>>>>>>>>>>>>>>>>>>> FIM DA FUNCAO DRIVER
 
 int ins_page(char* key, int child, Node* page){
     int i;
@@ -111,7 +113,8 @@ int ins_page(char* key, int child, Node* page){
     }
 }
 
-int insert(int currentRRN, char key[], char** promoKey, int promoChild, Cabecalho* reg_cabecalho){ // lembrar de colocar o arquivo como parametro
+int insert(Node** node, int currentRRN, char key[], char** promoKey, 
+            int promoChild, Cabecalho* reg_cabecalho, FILE* file_dados, FILE* file_indice){ // lembrar de colocar o arquivo como parametro
 
     // PROMOTION = 1
     // NO PROMOTION = 0
@@ -123,46 +126,34 @@ int insert(int currentRRN, char key[], char** promoKey, int promoChild, Cabecalh
     char* PBkey = (char*)malloc(55*sizeof(char));
     memset(PBkey, '$', 55);
     PBkey[55] = '\0';
-    int PBRRN;
+    int PBRRN, found, promovido;
+    int pos = 0;
 
-    //char* aux; // vetor de chars (string) para armazenar os chars de um campo
-    //char** vec; // vetor dinâmico de strings para armazenar os campos de um registro
-    //vec = malloc(55*sizeof(char));
-
-
-    FILE* arq = fopen("binary.bin", "rb");
-
-
-    if (currentRRN = -1){
+    if (currentRRN == -1){
         strcpy(*promoKey, key);
         promoChild = -1;
         return 1;
     }
     else{
-        //char* str = malloc(256*sizeof(char)); // vetor dinamico ao qual serão atribuídas as strings de cada linha do arquivo
-        fseek(arq, (currentRRN+1)*205, SEEK_SET);
-        //fgets(str, 256, arq);
+        fseek(file_indice, (currentRRN+1)*205, SEEK_SET);
 
         //fread(buffer, sizeof, número, ponteiro)
         // Lembrar que essa estrutura que será não existe nas condições iniciais do programa
-        fread(&page.nroChavesNo, 4, 1, arq);
-        fread(&page.alturaNo, 4, 1, arq);
-        fread(&page.RRNdoNo, 4, 1, arq);
-        for (int k = 0; k < TAM_ORDEM - 2; k++){
-            fread(&page.filhos[k], 4, 1, arq);
-            fread(&page.chaves[k].chave, 55, 1, arq);
-            fread(&page.chaves[k].RRN, 4, 1, arq);
+        fread(&page.nroChavesNo, 4, 1, file_indice);
+        fread(&page.alturaNo, 4, 1, file_indice);
+        fread(&page.RRNdoNo, 4, 1, file_indice);
+        for (int k = 0; k < TAM_ORDEM; k++){
+            fread(&page.filhos[k], 4, 1, file_indice);
+            if (k < TAM_ORDEM - 1){
+                fread(&page.chaves[k].chave, 55, 1, file_indice);
+                fread(&page.chaves[k].RRN, 4, 1, file_indice);    
+            }
         }
-        fread(&page.filhos[2], 4, 1, arq);
-        fread(&page.chaves[2].chave, 55, 1, arq);
-        fread(&page.chaves[2].RRN, 4, 1, arq);
-        fread(&page.filhos[3], 4, 1, arq);
+
 
         // < 0, str1 < str2
         // > 0, str1 > str2
         //(str1, str2)
-
-        int pos = 0;
         for (int k = 0; k <= 2; k++){
             if (strcmp(key, page.chaves[k].chave) > 0){
                 //if (k < 2)
@@ -177,7 +168,7 @@ int insert(int currentRRN, char key[], char** promoKey, int promoChild, Cabecalh
                 }
             }
         }
-        int value = insert(page.filhos[pos], key, &PBkey, PBRRN, reg_cabecalho); // definiu o PBRRN anteriormente??
+        int value = insert(node, page.filhos[pos], key, &PBkey, PBRRN, reg_cabecalho, file_dados, file_indice); // definiu o PBRRN anteriormente??
 
         if (value == 0 || value == -1){
             return value;
@@ -190,45 +181,55 @@ int insert(int currentRRN, char key[], char** promoKey, int promoChild, Cabecalh
             }
             else{
                 // split
-                fseek(arq, (currentRRN+1)*205, SEEK_SET); // fseek está certo mesmo?
-                fwrite(&page.nroChavesNo, 4, 1, arq);
-                fwrite(&page.alturaNo, 4, 1, arq);
-                fwrite(&page.RRNdoNo, 4, 1, arq);
+                fseek(file_indice, (currentRRN+1)*205, SEEK_SET); // fseek está certo mesmo?
+                fwrite(&page.nroChavesNo, 4, 1, file_indice);
+                fwrite(&page.alturaNo, 4, 1, file_indice);
+                fwrite(&page.RRNdoNo, 4, 1, file_indice);
                 // Pi, Ci, PRi
-                for (int w = 0; w < TAM_ORDEM - 2; w++){
-                    fwrite(&page.filhos[w], 4, 1, arq);
-                    fwrite(&page.chaves[w].chave, 1, 55, arq);
-                    fwrite(&page.chaves[w].RRN, 4, 1, arq);
+                for (int w = 0; w < TAM_ORDEM; w++){
+                    fwrite(&page.filhos[w], 4, 1, file_indice);
+                    if (w < TAM_ORDEM - 1){
+                        fwrite(&page.chaves[w].chave, 1, 55, file_indice);
+                        fwrite(&page.chaves[w].RRN, 4, 1, file_indice);
+                    }
                 }
-                fwrite(&page.filhos[2], 4, 1, arq);
-                fwrite(&page.chaves[2].chave, 1, 55, arq);
-                fwrite(&page.chaves[2].RRN, 4, 1, arq);
-                fwrite(&page.filhos[3], 4, 1, arq);
 
 
-                fseek(arq, 0, SEEK_END); // fseek está certo mesmo?
-                fwrite(&newpage.nroChavesNo, 4, 1, arq);
-                fwrite(&newpage.alturaNo, 4, 1, arq);
-                fwrite(&newpage.RRNdoNo, 4, 1, arq);
+                fseek(file_indice, 0, SEEK_END); // fseek está certo mesmo?
+                fwrite(&newpage.nroChavesNo, 4, 1, file_indice);
+                fwrite(&newpage.alturaNo, 4, 1, file_indice);
+                fwrite(&newpage.RRNdoNo, 4, 1, file_indice);
+                
                 // Pi, Ci, PRi
-                for (int w = 0; w < TAM_ORDEM - 2; w++){
-                    fwrite(&newpage.filhos[w], 4, 1, arq);
-                    fwrite(&newpage.chaves[w].chave, 1, 55, arq);
-                    fwrite(&newpage.chaves[w].RRN, 4, 1, arq);
+                for (int w = 0; w < TAM_ORDEM; w++){
+                    fwrite(&newpage.filhos[w], 4, 1, file_indice);
+                    if (w < TAM_ORDEM - 1){
+                        fwrite(&newpage.chaves[w].chave, 1, 55, file_indice);
+                        fwrite(&newpage.chaves[w].RRN, 4, 1, file_indice);    
+                    }
                 }
-                fwrite(&newpage.filhos[2], 4, 1, arq);
-                fwrite(&newpage.chaves[2].chave, 1, 55, arq);
-                fwrite(&newpage.chaves[2].RRN, 4, 1, arq);
-                fwrite(&newpage.filhos[3], 4, 1, arq);
+
+                //&&&&&&&&&&&&&&&&&& isso aqui é realmente necessário? está no lugar certo?
+                if (insert(node, currentRRN, key, &PBkey, promoChild, reg_cabecalho, file_dados, file_indice) == 1) {
+                //if (insert(node, RRNROOT, chave, &empty_key, promoChild, reg_cabecalho, file_dados, file_indice) == 1)
+                reg_cabecalho->RRNproxNo++;
+                *node = criarNo(); // Cria um novo nó e atualiza o ponteiro root
+                }
 
                 return 1;
             }
         }
     }
 
-    free(PBkey);
-    fclose(arq);
+    /*promovido = insert(node, currentRRN, key, &PBkey, page.filhos[pos], reg_cabecalho, file_dados, file_indice);
+    if (!promovido){
+        return 0;
+    }
+    if (page.nroChavesNo < TAM_ORDEM - 1){
+        ins_page(PBkey, )
+    }*/
 
+    free(PBkey);
 }
 
 
@@ -277,38 +278,59 @@ void split(char* newkey, int newkeyChildRRN, Node page, char* promoKey, int prom
 
     strcpy(tmpPage.chaves[3].chave, newkey);
     tmpPage.filhos[4] = newkeyChildRRN;
-
-
-	/*for (int i = pai->nroChavesNo; i > indiceFilho; i--) {
-        pai->filhos[i + 1] = pai->filhos[i];
-    }
-    //pai->filhos[indiceFilho + 1] = novoFilho;
-    pai->filhos[indiceFilho + 1] = novoFilho->RRNdoNo;
-
-    for (int i = pai->nroChavesNo - 1; i >= indiceFilho; i--) {
-        pai->chaves[i + 1] = pai->chaves[i]; // (verificar se esta realmente certo)
-    }
-    pai->chaves[indiceFilho] = filho->chaves[TAM_ORDEM - 1]; // (verificar se realmente ta certo)
-    pai->nroChavesNo++;*/
 }
 
-void search(int RRN, char key, int foundRRN, int foundPos){
+int busca(int RRN, char* key, int foundRRN, int foundPos, FILE* file_indice){
 
-    FILE* file;
+    // 1 = FOUND; -1 = NOT FOUND
 
+    int noRaiz;
+    Node page;
 
     if (RRN = -1){
         printf("pagina não encontrada");
-        return;
+        return -1;
     }
-    else{
+    
+    fseek(file_indice, 1, SEEK_SET);
 
+    fread(&RRN, 4, 1, file_indice);
+    fseek(file_indice, (noRaiz+1)*205, SEEK_SET);
+    fread(&page.nroChavesNo, 4, 1, file_indice);
+    fread(&page.alturaNo, 4, 1, file_indice);
+    fread(&page.RRNdoNo, 4, 1, file_indice);
+    for (int w = 0; w < TAM_ORDEM; w++){
+        fread(&page.filhos[w], 4, 1, file_indice);
+            if (w < TAM_ORDEM - 1){
+                fread(&page.chaves[w].chave, 1, 55, file_indice);
+                fread(&page.chaves[w].RRN, 4, 1, file_indice);
+            }
     }
+
+    int i;
+    for (i = 0; i < TAM_ORDEM - 1; i++){
+        if (!strcmp(key, page.chaves[i].chave)){
+            foundRRN = RRN;
+            foundPos = i;
+            return 1;
+        }
+    }
+
+    return busca(page.filhos[i], key, foundRRN, foundPos, file_indice);
 }
 
 
 int main(){
-    //driver();
+
+    FILE* file_dados = fopen("binary.bin", "rb");
+    FILE* file_indice = fopen("arvB.bin", "wb+");
+
+    Node* root = criarNo(); // CRIANDO A RAIZ DA ARVORE (root = malloc(sizeof(Node)))
+    //driver(&root, file_dados, file_indice);
+
+    free(root);
+    fclose(file_indice);
+    fclose(file_dados);
 
 	return 0;
 }
